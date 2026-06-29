@@ -110,28 +110,59 @@ def get_poppler_path():
     return None  # 開發時需 poppler 在 PATH
 
 # ── 列印 ──────────────────────────────────────────────────────
-def print_file(filepath, printer_name):
-    """暫切預設印表機 → 送印 → 恢復"""
-    original = get_default_printer()
-    try:
-        if printer_name and printer_name != original:
-            set_default_printer(printer_name)
-        _do_print(filepath)
-    finally:
-        if printer_name and printer_name != original:
-            set_default_printer(original)
+DMCOLOR_MONOCHROME = 1
+DMCOLOR_COLOR = 2
+DM_COLOR = 0x00000800
 
-def _do_print(filepath):
+def print_file_with_color_mode(filepath, printer_name, color_mode):
+    """
+    透過 DEVMODE 強制彩色/黑白後送印。
+    color_mode: DMCOLOR_MONOCHROME=1（黑白）或 DMCOLOR_COLOR=2（彩色）
+    """
+    import win32print
+    import win32con
+    import pywintypes
+
     ext = Path(filepath).suffix.lower()
-    if ext == ".pdf":
-        # 用 SumatraPDF 靜默列印（若有），否則 ShellExecute
-        sumatra = _find_sumatra()
-        if sumatra:
-            subprocess.run([sumatra, "-print-to-default", "-silent", filepath])
-        else:
-            os.startfile(filepath, "print")
-    else:
-        os.startfile(filepath, "print")
+
+    try:
+        hprinter = win32print.OpenPrinter(printer_name)
+        try:
+            # 取得印表機 DEVMODE
+            dmsize = win32print.DocumentProperties(0, hprinter, printer_name, None, None, 0)
+            driverextra = dmsize - pywintypes.DEVMODEType().Size
+            dm = pywintypes.DEVMODEType(driverextra)
+            win32print.DocumentProperties(0, hprinter, printer_name,
+                                          dm, dm,
+                                          win32con.DM_IN_BUFFER | win32con.DM_OUT_BUFFER)
+            # 設定彩色模式
+            dm.Color = color_mode
+            dm.Fields = dm.Fields | DM_COLOR
+            win32print.DocumentProperties(0, hprinter, printer_name,
+                                          dm, dm,
+                                          win32con.DM_IN_BUFFER | win32con.DM_OUT_BUFFER)
+        finally:
+            win32print.ClosePrinter(hprinter)
+
+        # 送印：PDF 用 SumatraPDF，其他用 ShellExecute
+        original = get_default_printer()
+        try:
+            if printer_name != original:
+                set_default_printer(printer_name)
+            if ext == ".pdf":
+                sumatra = _find_sumatra()
+                if sumatra:
+                    subprocess.run([sumatra, "-print-to-default", "-silent", filepath])
+                else:
+                    os.startfile(filepath, "print")
+            else:
+                os.startfile(filepath, "print")
+        finally:
+            if printer_name != original:
+                set_default_printer(original)
+
+    except Exception as e:
+        raise RuntimeError(f"列印失敗：{e}")
 
 def _find_sumatra():
     candidates = [
@@ -201,10 +232,11 @@ class App(tk.Tk):
         self.cfg = load_config()
         self.current_file = None       # 原始選取的檔案
         self.preview_pdf = None        # 實際用來預覽的 PDF（可能是暫存）
-        self.preview_images = []       # PIL Image list
+        self.preview_images = []       # PIL Image list（原始彩色）
         self.tk_images = []            # 保留參考避免 GC
         self.current_page = 0
         self._tmp_files = []           # 打開時建立的暫存檔，關閉時清理
+        self._preview_grayscale = False  # 目前預覽是否為灰階
 
         self._build_ui()
 
@@ -304,6 +336,7 @@ class App(tk.Tk):
         self.color_btn.config(state="disabled")
         self.preview_images = []
         self.current_page = 0
+        self._preview_grayscale = False
         self._set_status("載入中…")
 
         threading.Thread(target=self._load_preview, daemon=True).start()
@@ -364,6 +397,10 @@ class App(tk.Tk):
         cw = self.canvas.winfo_width() or 800
         ch = self.canvas.winfo_height() or 560
 
+        # 灰階模式
+        if self._preview_grayscale:
+            pil_img = pil_img.convert("L").convert("RGB")
+
         # 等比縮放
         iw, ih = pil_img.size
         scale = min(cw / iw, ch / ih, 1.0)
@@ -403,12 +440,20 @@ class App(tk.Tk):
 
     # ── 列印 ─────────────────────────────────────────────────
     def _print_bw(self):
-        self._do_print(self.cfg.get("bw_printer", ""), "黑白")
+        # 切換預覽為灰階
+        if not self._preview_grayscale:
+            self._preview_grayscale = True
+            self._show_current_page()
+        self._do_print(self.cfg.get("bw_printer", ""), "黑白", DMCOLOR_MONOCHROME)
 
     def _print_color(self):
-        self._do_print(self.cfg.get("color_printer", ""), "彩色")
+        # 切換預覽為彩色
+        if self._preview_grayscale:
+            self._preview_grayscale = False
+            self._show_current_page()
+        self._do_print(self.cfg.get("color_printer", ""), "彩色", DMCOLOR_COLOR)
 
-    def _do_print(self, printer_name, label):
+    def _do_print(self, printer_name, label, color_mode):
         if not self.current_file:
             messagebox.showwarning("尚未選擇檔案", "請先選擇要列印的檔案。")
             return
@@ -420,13 +465,13 @@ class App(tk.Tk):
         self._set_status(f"送印至 {printer_name}…")
         threading.Thread(
             target=self._print_thread,
-            args=(self.current_file, printer_name, label),
+            args=(self.current_file, printer_name, label, color_mode),
             daemon=True
         ).start()
 
-    def _print_thread(self, filepath, printer_name, label):
+    def _print_thread(self, filepath, printer_name, label, color_mode):
         try:
-            print_file(filepath, printer_name)
+            print_file_with_color_mode(filepath, printer_name, color_mode)
             self.after(0, lambda: self._set_status(f"✅ 已送至{label}印表機：{printer_name}"))
         except Exception as e:
             self.after(0, lambda: self._set_status(f"❌ 列印失敗：{e}"))
