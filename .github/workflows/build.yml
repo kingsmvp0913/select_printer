@@ -18,11 +18,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download poppler
+      - name: Install poppler via Chocolatey
         shell: pwsh
-        run: |
-          curl -L https://github.com/oschwartz10612/poppler-windows/releases/download/v24.08.0-0/Release-24.08.0.zip -o poppler.zip
-          Expand-Archive poppler.zip -DestinationPath poppler_dist
+        run: choco install poppler -y
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -30,11 +28,12 @@ jobs:
       - name: Build EXE
         shell: pwsh
         run: |
+          $poppler = "C:\ProgramData\chocolatey\lib\poppler\tools\Library\bin"
           pyinstaller --onefile --windowed `
             --name PrinterSelector `
-            --add-binary "poppler_dist\poppler-24.08.0\Library\bin\*.dll;poppler/bin" `
-            --add-binary "poppler_dist\poppler-24.08.0\Library\bin\pdfinfo.exe;poppler/bin" `
-            --add-binary "poppler_dist\poppler-24.08.0\Library\bin\pdftoppm.exe;poppler/bin" `
+            --add-binary "${poppler}\*.dll;poppler/bin" `
+            --add-binary "${poppler}\pdfinfo.exe;poppler/bin" `
+            --add-binary "${poppler}\pdftoppm.exe;poppler/bin" `
             main.py
 
       - name: Upload EXE
