@@ -18,16 +18,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Download poppler
+        shell: pwsh
         run: |
-          pip install pyinstaller
-          pip install -r requirements.txt
+          curl -L https://github.com/oschwartz10612/poppler-windows/releases/download/v24.02.0-0/Release-24.02.0.zip -o poppler.zip
+          Expand-Archive poppler.zip -DestinationPath poppler_dist
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
       - name: Build EXE
-        run: pyinstaller --onefile main.py
-
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-exe
-          path: dist/*.exe
+        shell: pwsh
+        run: |
+          pyinstaller --onefile --windowed `
+            --name PrinterSelector `
+            --add-binary "poppler_dist\poppler-24.02.0\Library\bin\*.dll;poppler/bin" `
+            --add-binary "poppler_dist\poppler-24.02.0\Library\bin\pdfinfo.exe;poppler/bin" `
+            --add-binary "poppler_dist\poppler-24.02.0\Library\bi
