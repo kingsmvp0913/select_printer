@@ -22,13 +22,19 @@ jobs:
         shell: pwsh
         run: choco install poppler -y
 
+      - name: Find poppler path
+        shell: pwsh
+        run: |
+          Get-ChildItem "C:\ProgramData\chocolatey\lib\poppler" -Recurse -Filter "pdftoppm.exe" | Select-Object FullName
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Build EXE
         shell: pwsh
         run: |
-          $poppler = "C:\ProgramData\chocolatey\lib\poppler\tools\Library\bin"
+          $poppler = (Get-ChildItem "C:\ProgramData\chocolatey\lib\poppler" -Recurse -Filter "pdftoppm.exe").DirectoryName
+          Write-Host "Poppler path: $poppler"
           pyinstaller --onefile --windowed `
             --name PrinterSelector `
             --add-binary "${poppler}\*.dll;poppler/bin" `
