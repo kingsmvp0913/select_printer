@@ -18,23 +18,32 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install poppler via Chocolatey
-        shell: pwsh
-        run: choco install poppler -y
+      - name: Install poppler via conda
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: build
+          python-version: '3.11'
 
-      - name: Find poppler path
+      - name: Install poppler
         shell: pwsh
         run: |
-          Get-ChildItem "C:\ProgramData\chocolatey\lib\poppler" -Recurse -Filter "pdftoppm.exe" | Select-Object FullName
+          conda install -c conda-forge poppler -y
+          $poppler = (Get-ChildItem "$env:CONDA_PREFIX\Library\bin" -Filter "pdftoppm.exe" -ErrorAction SilentlyContinue).DirectoryName
+          if (-not $poppler) {
+            $poppler = (Get-ChildItem "C:\Miniconda3" -Recurse -Filter "pdftoppm.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).DirectoryName
+          }
+          Write-Host "Poppler path: $poppler"
+          echo "POPPLER_PATH=$poppler" >> $env:GITHUB_ENV
 
-      - name: Install dependencies
+      - name: Install Python dependencies
+        shell: pwsh
         run: pip install -r requirements.txt
 
       - name: Build EXE
         shell: pwsh
         run: |
-          $poppler = (Get-ChildItem "C:\ProgramData\chocolatey\lib\poppler" -Recurse -Filter "pdftoppm.exe").DirectoryName
-          Write-Host "Poppler path: $poppler"
+          $poppler = $env:POPPLER_PATH
+          Write-Host "Using poppler: $poppler"
           pyinstaller --onefile --windowed `
             --name PrinterSelector `
             --add-binary "${poppler}\*.dll;poppler/bin" `
